@@ -1,0 +1,136 @@
+[
+  {
+    "$match": {
+      "$and": [
+        {
+          "candidate.isdiffpos": {
+            "$eq": true
+          }
+        },
+        {
+          "candidate.rb": {
+            "$gte": 0.2
+          }
+        },
+        {
+          "candidate.drb": {
+            "$gte": 0.8
+          }
+        },
+        {
+          "properties.rock": {
+            "$eq": false
+          }
+        },
+        {
+          "properties.stationary": {
+            "$eq": true
+          }
+        },
+        {
+          "properties.star": {
+            "$eq": false
+          }
+        },
+        {
+          "properties.near_brightstar": {
+            "$eq": false
+          }
+        },
+        {
+          "candidate.ndethist": {
+            "$gte": 1
+          }
+        }
+      ]
+    }
+  },
+  {
+    "$project": {
+      "objectId": 1,
+      "candidate.jd": 1,
+      "candidate.isdiffpos": 1,
+      "candidate.rb": 1,
+      "candidate.drb": 1,
+      "properties.rock": 1,
+      "properties.stationary": 1,
+      "properties.star": 1,
+      "properties.near_brightstar": 1,
+      "candidate.ndethist": 1,
+      "candidate.jdstarthist": 1,
+      "cross_matches.milliquas_v8": 1
+    }
+  },
+  {
+    "$addFields": {
+      "Is_Quasar": {
+        "$anyElementTrue": {
+          "$map": {
+            "input": {
+              "$ifNull": [
+                "$cross_matches.milliquas_v8",
+                []
+              ]
+            },
+            "in": {
+              "$in": [
+                "$$this.objtype",
+                [
+                  "Q",
+                  "Q2",
+                  "Q2X",
+                  "QR",
+                  "QR2",
+                  "QR2X",
+                  "QRX",
+                  "QX"
+                ]
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "$match": {
+      "$and": [
+        {
+          "Is_Quasar": {
+            "$eq": false
+          }
+        },
+        {
+          "$expr": {
+            "$lte": [
+              {
+                "$subtract": [
+                  "$candidate.jd",
+                  "$candidate.jdstarthist"
+                ]
+              },
+              30
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "$project": {
+      "objectId": 1,
+      "candidate.jd": 1,
+      "candidate.isdiffpos": 1,
+      "candidate.rb": 1,
+      "candidate.drb": 1,
+      "properties.rock": 1,
+      "properties.stationary": 1,
+      "properties.star": 1,
+      "properties.near_brightstar": 1,
+      "candidate.ndethist": 1,
+      "candidate.jdstarthist": 1,
+      "cross_matches.milliquas_v8": 1,
+      "Is_Quasar": 1
+    }
+  }
+]

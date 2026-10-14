@@ -1,0 +1,42 @@
+# Lightweight env for consuming BOOM/Babamul Kafka alerts (ZTF + LSST)
+# and filtering them against GW skymaps -- no local BOOM install needed.
+#   conda env create -f environment.yml
+#   conda activate boom
+name: boom
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12          # babamul/blastwave need >=3.11
+  - pip
+  - git
+
+  # --- Kafka + Avro (what boom_consumer.py / babamul_consumer.py use) ---
+  - python-confluent-kafka   # ships librdkafka with SASL/SSL support
+  - fastavro
+  - python-dotenv
+  - requests
+
+  # --- Science stack ---
+  - numpy
+  - scipy
+  - pandas>=3.0
+  - pyarrow
+  - matplotlib
+  - astropy>=7.2
+
+  # --- GW skymaps ---
+  - healpy
+  - ligo.skymap          # read LVK multi-order skymaps, credible regions
+  - astropy-healpix
+  - mocpy                # MOCs: fast "is this alert inside the 90% region?"
+
+  # --- Notebooks ---
+  - jupyterlab
+  - ipywidgets
+  - tqdm
+
+  - pip:
+      - "confluent-kafka[avro,schemaregistry]"  # extras used by boom-analysis-tools
+      - babamul          # Babamul (public BOOM stream) client
+      - blastwave        # BOOM query client (optional, for history/cone searches)
+      - gcn-kafka        # receive LVK alerts + skymaps (igwn.gwalert topic) from GCN
