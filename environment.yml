@@ -2,7 +2,7 @@
 # and filtering them against GW skymaps -- no local BOOM install needed.
 #   conda env create -f environment.yml
 #   conda activate boom
-name: boom
+name: gwoom
 channels:
   - conda-forge
 dependencies:
