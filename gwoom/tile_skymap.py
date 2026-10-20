@@ -34,7 +34,7 @@ Usage
 -----
     python tile_skymap.py path/to/skymap.fits --radius 1.5
     python tile_skymap.py bayestar.multiorder.fits -r 2 --level 0.95 --plot tiles.png
-    python tile_skymap.py skymap.fits -r 1 --level 1.0 --out tiles.csv   # whole map
+    python tile_skymap.py skymap.fits -r 1 --level 1.0 --out tiles.csv   # whole map, explicit name
 
 As a module
 -----------
@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from dataclasses import dataclass, field
 
@@ -55,6 +56,8 @@ import healpy as hp
 import numpy as np
 
 SQRT3 = np.sqrt(3.0)
+
+
 
 
 # --------------------------------------------------------------------------- #
@@ -100,6 +103,24 @@ def read_skymap(path: str, nside: int | None = None, radius_deg: float | None = 
     if total <= 0:
         raise ValueError("Map has no positive probability.")
     return prob / total
+
+
+def event_name(path: str) -> str:
+    """Event name from the OBJECT header (GBM: 'GRB261013582', LVK: 'S250101ab'),
+    falling back to the file name without its .fits/.fits.gz extension."""
+    from astropy.io import fits
+    try:
+        with fits.open(path) as hdul:
+            for hdu in hdul:
+                obj = str(hdu.header.get("OBJECT", "")).strip()
+                if obj and obj.upper() not in ("FULLSKY", "PARTIAL"):   # healpy defaults
+                    return obj.rstrip("/").split("/")[-1]      # LVK may give a URL
+    except OSError:
+        pass
+    name = os.path.basename(path)
+    for ext in (".gz", ".fits", ".fit", ".multiorder"):
+        name = name.removesuffix(ext)
+    return name
 
 
 def credible_region(prob: np.ndarray, level: float) -> np.ndarray:
@@ -452,9 +473,16 @@ def main(argv=None):
                    help="require whole pixels (not just centres) inside a circle")
     p.add_argument("--trials", type=int, default=10, help="grid phases to try (default 10)")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("-o", "--out", default="tiles.csv", help="output CSV (default tiles.csv)")
+    p.add_argument("-o", "--out", default=None,
+                   help="output CSV (default <event>_tiles.csv, event from the OBJECT header)")
     p.add_argument("--plot", default=None, help="save a PNG of the tiling")
+    p.add_argument("--outdir", default="outputs",
+                   help="directory for --out and --plot, created if missing (default outputs/)")
     a = p.parse_args(argv)
+    os.makedirs(a.outdir, exist_ok=True)
+    a.out = os.path.join(a.outdir, a.out or f"{event_name(a.skymap)}_tiles.csv")
+    if a.plot:
+        a.plot = os.path.join(a.outdir, a.plot)
 
     prob = read_skymap(a.skymap, nside=a.nside,
                        radius_deg=None if a.native else a.radius)
