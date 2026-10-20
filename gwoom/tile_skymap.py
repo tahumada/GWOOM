@@ -33,7 +33,7 @@ pixel radius when placing and checking circles).
 Usage
 -----
     python tile_skymap.py path/to/skymap.fits --radius 1.5
-    python tile_skymap.py bayestar.multiorder.fits -r 2 --level 0.95 --plot tiles.png
+    python tile_skymap.py bayestar.multiorder.fits -r 2 --level 0.95 --plot
     python tile_skymap.py skymap.fits -r 1 --level 1.0 --out tiles.csv   # whole map, explicit name
 
 As a module
@@ -51,13 +51,22 @@ import csv
 import os
 import sys
 from dataclasses import dataclass, field
-
+from astropy.io import fits
 import healpy as hp
 import numpy as np
+import logging
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
+
+# project root = the folder above this script, so outputs land in the same
+# place whatever directory the script is run from
+DEFAULT_OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
 
 SQRT3 = np.sqrt(3.0)
 
-
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s at %(asctime)s]: %(message)s",
+                    datefmt="%H:%M:%S")
 
 
 # --------------------------------------------------------------------------- #
@@ -77,17 +86,19 @@ def read_skymap(path: str, nside: int | None = None, radius_deg: float | None = 
     """
     try:
         from ligo.skymap.io import read_sky_map
+        logger.info(f"Reading skymap file {path} with ligo.skymap")
         prob, _meta = read_sky_map(path, moc=False, nest=False)
+        logger.info(f"Done reading skymap file {path} with ligo.skymap")
     except ImportError:
         if verbose:
-            print("ligo.skymap not found, reading with healpy "
+            logger.warning("ligo.skymap not found, reading with healpy "
                   "(multi-order/NUNIQ files will not work)", file=sys.stderr)
         prob = hp.read_map(path, field=0, nest=False, dtype=np.float64)
 
     prob = np.asarray(prob, dtype=np.float64)
     prob[~np.isfinite(prob) | (prob == hp.UNSEEN) | (prob < 0)] = 0.0
-
     native = hp.npix2nside(prob.size)
+    logger.info(f"native NSIDE={native}")
     if nside is None and radius_deg is not None:
         nside = native
         while nside > 1 and np.degrees(hp.nside2resol(nside // 2)) <= radius_deg / 4:
@@ -100,15 +111,15 @@ def read_skymap(path: str, nside: int | None = None, radius_deg: float | None = 
             print(f"Resampled map from NSIDE={native} to NSIDE={nside}", file=sys.stderr)
 
     total = prob.sum()
+    logger.info(f"total probability={total:.6g}")
     if total <= 0:
         raise ValueError("Map has no positive probability.")
     return prob / total
 
 
 def event_name(path: str) -> str:
-    """Event name from the OBJECT header (GBM: 'GRB261013582', LVK: 'S250101ab'),
-    falling back to the file name without its .fits/.fits.gz extension."""
-    from astropy.io import fits
+    """Event name from the OBJECT header"""
+    # FIXME: ligo skymaps have the event name written in the format we want, whereas fermi skymaps have the object name in a different format. need to think about standardizing these.
     try:
         with fits.open(path) as hdul:
             for hdu in hdul:
@@ -139,8 +150,6 @@ def region_components(nside: int, region_pix: np.ndarray) -> list[np.ndarray]:
     """Split region pixels (RING) into connected islands. GW maps are often
     multimodal; each island gets its own grid frame, which keeps the hex grid
     undistorted on every island instead of only near the global centroid."""
-    from scipy.sparse import coo_matrix
-    from scipy.sparse.csgraph import connected_components
 
     local = -np.ones(hp.nside2npix(nside), dtype=np.int64)
     local[region_pix] = np.arange(region_pix.size)
@@ -274,6 +283,7 @@ def _solve(nside, region_pix, region_vec, weights, r_deg, rng, trial, shrink=1.0
         np.add.at(counts, d, 1)
 
     # Patch any holes left by spherical distortion of the grid.
+    logger.debug(f"{np.count_nonzero(counts == 0)} holes after grid placement")
     while True:
         holes = np.flatnonzero(counts == 0)
         if holes.size == 0:
@@ -325,12 +335,13 @@ def tile_skymap(prob: np.ndarray, radius_deg: float, level: float = 0.9,
     rng = np.random.default_rng(seed)
     islands = region_components(nside, region_pix)
     if verbose:
-        print(f"Region: {region_pix.size} pixels in {len(islands)} island(s)", file=sys.stderr)
+        logger.info(f"Region: {region_pix.size} pixels in {len(islands)} island(s)")
 
     # Spherical distortion breaks the perfect hex lattice away from the frame
     # equator. Slightly tighter grids leave fewer holes to patch; which one wins
     # depends on the region, so try a few and keep the best -- per island.
     all_vecs = []
+    logger.info(f"tiling with {n_trials} random grid phases and shrink factors")
     for k, isl in enumerate(islands):
         isl_vec = np.array(hp.pix2vec(nside, isl)).T
         best = None
@@ -453,6 +464,7 @@ def plot(t: Tiling, path: str) -> None:
             hp.projplot(lo, la, lonlat=True, color="w", lw=0.5, alpha=0.8)
     hp.projscatter(t.ra, t.dec, lonlat=True, s=4, c="r")
     plt.savefig(path, dpi=150, bbox_inches="tight")
+    logger.info(f"Wrote tiling plot to {path}")
     plt.close("all")
 
 
@@ -475,14 +487,16 @@ def main(argv=None):
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("-o", "--out", default=None,
                    help="output CSV (default <event>_tiles.csv, event from the OBJECT header)")
-    p.add_argument("--plot", default=None, help="save a PNG of the tiling")
-    p.add_argument("--outdir", default="outputs",
-                   help="directory for --out and --plot, created if missing (default outputs/)")
+    p.add_argument("--plot", nargs="?", const="", default=None,
+                   help="save a PNG of the tiling (default name <event>_tiles.png)")
+    p.add_argument("--outdir", default=DEFAULT_OUTDIR,
+                   help="output directory, created if missing (default: <project root>/outputs)")
     a = p.parse_args(argv)
     os.makedirs(a.outdir, exist_ok=True)
-    a.out = os.path.join(a.outdir, a.out or f"{event_name(a.skymap)}_tiles.csv")
-    if a.plot:
-        a.plot = os.path.join(a.outdir, a.plot)
+    event = event_name(a.skymap)
+    a.out = os.path.join(a.outdir, a.out or f"{event}_tiles.csv")
+    if a.plot is not None:
+        a.plot = os.path.join(a.outdir, a.plot or f"{event}_tiles.png")
 
     prob = read_skymap(a.skymap, nside=a.nside,
                        radius_deg=None if a.native else a.radius)
@@ -491,11 +505,17 @@ def main(argv=None):
     if a.plot:
         plot(t, a.plot)
 
-    print("\nSummary")
-    for k, v in t.summary.items():
-        print(f"  {k:34s} {v:.4g}" if isinstance(v, float) else f"  {k:34s} {v}")
-    print(f"\nWrote {a.out}" + (f" and {a.plot}" if a.plot else ""))
-
+    rows = [(k, f"{v:.4g}" if isinstance(v, float) else str(v)) for k, v in t.summary.items()]
+    wk = max(len(k) for k, _ in rows + [("quantity", "")])
+    wv = max(len(v) for _, v in rows + [("", "value")])
+    print(f"\n┌─{'─' * wk}─┬─{'─' * wv}─┐")
+    print(f"│ {'quantity':<{wk}} │ {'value':>{wv}} │")
+    print(f"├─{'─' * wk}─┼─{'─' * wv}─┤")
+    for k, v in rows:
+        print(f"│ {k:<{wk}} │ {v:>{wv}} │")
+    print(f"└─{'─' * wk}─┴─{'─' * wv}─┘")
+    logger.info(f"Wrote {a.out}" + (f" and {a.plot}" if a.plot else ""))
+    logger.info(f"{t.summary['n_tiles']} circles, radius {t.radius_deg} deg")
 
 if __name__ == "__main__":
     main()
