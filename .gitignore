@@ -1,0 +1,5 @@
+*fits
+__pycache__/
+*code-workspace
+outputs/
+.venv
