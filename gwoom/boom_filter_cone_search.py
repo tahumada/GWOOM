@@ -25,7 +25,7 @@ Credentials (same as blastwave):
 Usage
 -----
     python boom_filter_cone_search.py --filter ztf_basic.json \\
-        --tiles tiles.csv --tile-id 0 --t0 2026-10-12T03:14:15 --dt-days 7
+        --tiles outputs/tiles.csv --tile-id 0 --t0 2026-10-12T03:14:15 --dt-days 7
 
     python boom_filter_cone_search.py --filter ztf_basic.json \\
         --ra 160.1 --dec 14.26 --radius 2 --t0 2461325.63 --programids 1 2 3
@@ -51,7 +51,7 @@ from blastwave import BOOMClient
 MAX_JD_WINDOW = 7.0          # enforced by /filters/test
 MAX_MOC_RANGES = 4500        # server limit is 5000 HEALPix index ranges
 EXTRA_FIELDS = ["candidate.ra", "candidate.dec", "candidate.magpsf",
-                "candidate.sigmapsf", "candidate.fid"]
+                "candidate.sigmapsf", "candidate.fid", "candidate.band"]
 ZTF_BANDS = {1: "g", 2: "r", 3: "i"}
 
 
@@ -101,19 +101,23 @@ def to_jd(t: str) -> float:
 
 
 def load_pipeline(path: str) -> list[dict]:
-    """Load a BOOM filter (a JSON list of aggregation stages) and make sure its
-    $project stages keep the fields we need to report and to apply the exact
-    cone cut (most filters keep neither RA nor Dec).
-
-    In MongoDB a $project is an *exclusion* only if every field (except _id)
-    is 0/false; those already keep RA/Dec, so only inclusion projections
-    (including ones with computed fields) are extended."""
+    """Load a BOOM filter (a JSON list of aggregation stages) from a file."""
     with open(path) as f:
         pipeline = json.load(f)
     if isinstance(pipeline, dict) and isinstance(pipeline.get("pipeline"), list):
         pipeline = pipeline["pipeline"]          # tolerate {"pipeline": [...]} wrappers
     if not isinstance(pipeline, list) or not all(isinstance(s, dict) for s in pipeline):
         raise ValueError(f"{path} is not a BOOM filter: expected a JSON list of stages")
+    return prepare_pipeline(pipeline)
+
+
+def prepare_pipeline(pipeline: list[dict], extra_fields: list[str] = EXTRA_FIELDS) -> list[dict]:
+    """Copy of `pipeline` whose $project stages keep the fields we need to
+    report and to apply the exact cone cut (most filters keep neither RA nor Dec).
+
+    In MongoDB a $project is an *exclusion* only if every field (except _id)
+    is 0/false; those already keep RA/Dec, so only inclusion projections
+    (including ones with computed fields) are extended."""
     pipeline = copy.deepcopy(pipeline)
     for stage in pipeline:
         proj = stage.get("$project")
@@ -122,7 +126,7 @@ def load_pipeline(path: str) -> list[dict]:
         exclusion = all(v in (0, False) for k, v in proj.items() if k != "_id")
         if exclusion or "candidate" in proj:     # "candidate" kept whole already
             continue
-        for fld in EXTRA_FIELDS:
+        for fld in extra_fields:
             proj.setdefault(fld, 1)
     return pipeline
 
@@ -143,10 +147,11 @@ def cone_moc(ra: float, dec: float, radius_deg: float) -> tuple[str, int]:
 # --------------------------------------------------------------------------- #
 def run_filter_in_cone(client: BOOMClient, pipeline: list[dict], ra: float, dec: float,
                        radius_deg: float, jd_start: float, jd_end: float,
-                       programids: list[int], survey: str = "ZTF",
+                       programids: list[int] | None, survey: str = "ZTF",
                        limit: int = 10_000, verbose: bool = True) -> list[dict]:
     """Run `pipeline` on `survey` alerts inside the cone and JD window.
-    Returns the raw alert documents, cut to the exact cone radius."""
+    Returns the raw alert documents, cut to the exact cone radius.
+    programids=None sends no permissions (surveys without programids, e.g. LSST)."""
     moc_ascii, depth = cone_moc(ra, dec, radius_deg)
     results = []
     edges = np.arange(jd_start, jd_end, MAX_JD_WINDOW).tolist() + [jd_end]
@@ -154,7 +159,7 @@ def run_filter_in_cone(client: BOOMClient, pipeline: list[dict], ra: float, dec:
         body = {
             "pipeline": pipeline,
             "survey": survey,
-            "permissions": {survey: programids},
+            "permissions": {survey: programids} if programids else {},
             "moc_ascii": moc_ascii,
             "start_jd": j0,
             "end_jd": j1,
@@ -243,7 +248,12 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=10_000, help="max alerts per 7-day request")
     p.add_argument("-o", "--out", default="filter_cone_alerts.csv")
     p.add_argument("--save-json", help="also save the full returned documents")
+    p.add_argument("--outdir", default="outputs", help="directory for outputs (default outputs/)")
     a = p.parse_args(argv)
+    os.makedirs(a.outdir, exist_ok=True)
+    a.out = os.path.join(a.outdir, a.out)
+    if a.save_json:
+        a.save_json = os.path.join(a.outdir, a.save_json)
 
     if a.tiles:
         ra, dec, radius = read_tile(a.tiles, a.tile_id)
