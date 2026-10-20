@@ -475,7 +475,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("Usage")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("skymap", help="HEALPix .fits / .fits.gz (flat or LVK multi-order)")
-    p.add_argument("-r", "--radius", type=float, required=True, help="circle radius, deg")
+    p.add_argument("-r", "--radius", type=float, required=False, help="circle radius, deg", default=5)
     p.add_argument("-l", "--level", type=float, default=0.9,
                    help="credible level to cover (default 0.9; 1.0 = all non-zero pixels)")
     p.add_argument("--nside", type=int, default=None,
