@@ -48,6 +48,10 @@ from mocpy import MOC
 
 from blastwave import BOOMClient
 
+# project root = the folder above this script, so outputs land in the same
+# place whatever directory the script is run from
+DEFAULT_OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+
 MAX_JD_WINDOW = 7.0          # enforced by /filters/test
 MAX_MOC_RANGES = 4500        # server limit is 5000 HEALPix index ranges
 EXTRA_FIELDS = ["candidate.ra", "candidate.dec", "candidate.magpsf",
@@ -248,7 +252,8 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=10_000, help="max alerts per 7-day request")
     p.add_argument("-o", "--out", default="filter_cone_alerts.csv")
     p.add_argument("--save-json", help="also save the full returned documents")
-    p.add_argument("--outdir", default="outputs", help="directory for outputs (default outputs/)")
+    p.add_argument("--outdir", default=DEFAULT_OUTDIR,
+                   help="output directory, created if missing (default: <project root>/outputs)")
     a = p.parse_args(argv)
     os.makedirs(a.outdir, exist_ok=True)
     a.out = os.path.join(a.outdir, a.out)
